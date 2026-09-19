@@ -1,0 +1,88 @@
+name: Build Plane Offline Package
+
+# 手动触发：仓库 Actions 页 → Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      app_release:
+        description: 'Plane release 版本号（镜像 tag）'
+        required: true
+        default: 'v1.4.2'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查系统环境
+        run: docker --version && df -h / | tail -1
+
+      - name: 拉取全部镜像
+        run: |
+          set -e
+          APP_RELEASE="${{ github.event.inputs.app_release }}"
+          echo "APP_RELEASE=$APP_RELEASE" >> "$GITHUB_ENV"
+          IMAGES=(
+            "makeplane/plane-frontend:${APP_RELEASE}"
+            "makeplane/plane-backend:${APP_RELEASE}"
+            "makeplane/plane-space:${APP_RELEASE}"
+            "makeplane/plane-admin:${APP_RELEASE}"
+            "makeplane/plane-live:${APP_RELEASE}"
+            "makeplane/plane-proxy:${APP_RELEASE}"
+            "postgres:15.7-alpine"
+            "valkey/valkey:7.2.11-alpine"
+            "rabbitmq:3.13.6-management-alpine"
+            "minio/minio:latest"
+          )
+          for img in "${IMAGES[@]}"; do
+            echo ">>> docker pull ${img}"
+            docker pull "${img}"
+          done
+
+      - name: 固定 minio tag（离线可复现）
+        run: |
+          docker tag minio/minio:latest minio/minio:plane-frozen
+
+      - name: docker save + gzip（约需几分钟）
+        run: |
+          set -e
+          APP_RELEASE="$APP_RELEASE"
+          docker save \
+            makeplane/plane-frontend:${APP_RELEASE} \
+            makeplane/plane-backend:${APP_RELEASE} \
+            makeplane/plane-space:${APP_RELEASE} \
+            makeplane/plane-admin:${APP_RELEASE} \
+            makeplane/plane-live:${APP_RELEASE} \
+            makeplane/plane-proxy:${APP_RELEASE} \
+            postgres:15.7-alpine \
+            valkey/valkey:7.2.11-alpine \
+            rabbitmq:3.13.6-management-alpine \
+            minio/minio:plane-frozen \
+          | gzip > plane-offline-images.tar.gz
+          ls -lh plane-offline-images.tar.gz
+
+      - name: 分片 + 生成校验和
+        run: |
+          split -b 900M -d plane-offline-images.tar.gz plane-offline-images.tar.gz.part
+          sha256sum plane-offline-images.tar.gz > SHA256SUMS
+          ls -lh plane-offline-images.tar.gz.part*
+
+      - name: 发布为 Release 资产
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: plane-offline-${{ github.event.inputs.app_release }}
+          name: "Plane ${{ github.event.inputs.app_release }} 离线部署包"
+          body: |
+            Plane ${{ github.event.inputs.app_release }} 内网离线部署镜像包。
+
+            下载全部 `.part*` 文件与 `SHA256SUMS` 后：
+            ```
+            cat plane-offline-images.tar.gz.part* > plane-offline-images.tar.gz
+            sha256sum -c SHA256SUMS
+            ```
+            产物与 `deploy.sh`、`docker-compose.yml`、`plane.env.example` 放同一目录，内网执行 `bash deploy.sh`。
+          files: |
+            plane-offline-images.tar.gz.part*
+            SHA256SUMS
