@@ -34,7 +34,8 @@ jobs:
             "postgres:15.7-alpine"
             "valkey/valkey:7.2.11-alpine"
             "rabbitmq:3.13.6-management-alpine"
-            "minio/minio:latest"
+            # MinIO 已从 Docker Hub 移除镜像，官方仓库在 quay.io
+            "quay.io/minio/minio:latest"
           )
           for img in "${IMAGES[@]}"; do
             echo ">>> docker pull ${img}"
@@ -43,7 +44,7 @@ jobs:
 
       - name: 固定 minio tag（离线可复现）
         run: |
-          docker tag minio/minio:latest minio/minio:plane-frozen
+          docker tag quay.io/minio/minio:latest minio/minio:plane-frozen
 
       - name: docker save + gzip（约需几分钟）
         run: |
